@@ -1,0 +1,450 @@
+# ============================================================
+# ADVANCED ML PROJECT
+# Train + Optimize + Deploy ML Model using FastAPI
+# Dataset: Breast Cancer Wisconsin Dataset
+# ============================================================
+
+# Install required packages
+!pip -q install fastapi uvicorn joblib nest-asyncio pyngrok
+
+
+# ============================================================
+# 1. IMPORT LIBRARIES
+# ============================================================
+
+import pandas as pd
+import numpy as np
+import joblib
+import nest_asyncio
+import threading
+import time
+
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse
+import uvicorn
+
+
+# ============================================================
+# 2. LOAD REAL-WORLD DATASET
+# ============================================================
+
+data = load_breast_cancer()
+
+df = pd.DataFrame(
+    data.data,
+    columns=data.feature_names
+)
+
+# Use five important features for this deployment project
+features = [
+    "mean radius",
+    "mean texture",
+    "mean perimeter",
+    "mean area",
+    "mean smoothness"
+]
+
+X = df[features]
+y = data.target
+
+print("Dataset loaded successfully!")
+print("Number of samples:", len(X))
+print("Features:", features)
+
+
+# ============================================================
+# 3. TRAIN / TEST SPLIT
+# ============================================================
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    random_state=42,
+    stratify=y
+)
+
+
+# ============================================================
+# 4. CREATE AND OPTIMIZE MODEL
+# ============================================================
+
+model = Pipeline([
+    ("scaler", StandardScaler()),
+
+    ("classifier", RandomForestClassifier(
+        n_estimators=200,
+        max_depth=10,
+        min_samples_split=4,
+        random_state=42
+    ))
+])
+
+
+# ============================================================
+# 5. TRAIN MODEL
+# ============================================================
+
+model.fit(X_train, y_train)
+
+print("\nModel training completed!")
+
+
+# ============================================================
+# 6. EVALUATE MODEL
+# ============================================================
+
+predictions = model.predict(X_test)
+
+accuracy = accuracy_score(y_test, predictions)
+
+print("\n========== MODEL EVALUATION ==========")
+print("Accuracy:", round(accuracy, 4))
+
+print("\nClassification Report:")
+print(
+    classification_report(
+        y_test,
+        predictions,
+        target_names=data.target_names
+    )
+)
+
+
+# ============================================================
+# 7. SAVE TRAINED MODEL
+# ============================================================
+
+joblib.dump(model, "student_ml_model.pkl")
+
+print("Model saved as student_ml_model.pkl")
+
+
+# ============================================================
+# 8. CREATE FASTAPI APPLICATION
+# ============================================================
+
+app = FastAPI(
+    title="Breast Cancer Prediction API",
+    description="Machine Learning Prediction API",
+    version="1.0"
+)
+
+# Load saved model
+loaded_model = joblib.load("student_ml_model.pkl")
+
+
+# ============================================================
+# 9. INPUT VALIDATION
+# ============================================================
+
+class PredictionInput(BaseModel):
+
+    mean_radius: float = Field(
+        ...,
+        gt=0,
+        description="Mean radius must be greater than 0"
+    )
+
+    mean_texture: float = Field(
+        ...,
+        gt=0,
+        description="Mean texture must be greater than 0"
+    )
+
+    mean_perimeter: float = Field(
+        ...,
+        gt=0,
+        description="Mean perimeter must be greater than 0"
+    )
+
+    mean_area: float = Field(
+        ...,
+        gt=0,
+        description="Mean area must be greater than 0"
+    )
+
+    mean_smoothness: float = Field(
+        ...,
+        gt=0,
+        description="Mean smoothness must be greater than 0"
+    )
+
+
+# ============================================================
+# 10. HOME API
+# ============================================================
+
+@app.get("/")
+def home():
+
+    return {
+        "message": "ML Prediction API is running",
+        "accuracy": round(accuracy, 4),
+        "documentation": "/docs"
+    }
+
+
+# ============================================================
+# 11. PREDICTION API
+# ============================================================
+
+@app.post("/predict")
+def predict(data: PredictionInput):
+
+    input_data = pd.DataFrame([{
+        "mean radius": data.mean_radius,
+        "mean texture": data.mean_texture,
+        "mean perimeter": data.mean_perimeter,
+        "mean area": data.mean_area,
+        "mean smoothness": data.mean_smoothness
+    }])
+
+    prediction = loaded_model.predict(input_data)[0]
+
+    probability = loaded_model.predict_proba(input_data)[0]
+
+    if prediction == 0:
+        result = "Malignant"
+    else:
+        result = "Benign"
+
+    return {
+        "prediction": result,
+        "confidence": round(float(max(probability)) * 100, 2)
+    }
+
+
+# ============================================================
+# 12. FRONTEND DASHBOARD
+# ============================================================
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard():
+
+    html = """
+    <!DOCTYPE html>
+
+    <html>
+
+    <head>
+
+        <title>ML Prediction Dashboard</title>
+
+        <style>
+
+            body {
+                font-family: Arial;
+                max-width: 600px;
+                margin: 40px auto;
+                padding: 20px;
+            }
+
+            h1 {
+                text-align: center;
+            }
+
+            input {
+                width: 100%;
+                padding: 10px;
+                margin: 8px 0 15px 0;
+                box-sizing: border-box;
+            }
+
+            button {
+                width: 100%;
+                padding: 12px;
+                font-size: 16px;
+                cursor: pointer;
+            }
+
+            #result {
+                margin-top: 25px;
+                padding: 15px;
+                font-size: 20px;
+                text-align: center;
+            }
+
+        </style>
+
+    </head>
+
+
+    <body>
+
+        <h1>ML Prediction Dashboard</h1>
+
+        <label>Mean Radius</label>
+        <input id="radius" type="number" step="any" min="0">
+
+
+        <label>Mean Texture</label>
+        <input id="texture" type="number" step="any" min="0">
+
+
+        <label>Mean Perimeter</label>
+        <input id="perimeter" type="number" step="any" min="0">
+
+
+        <label>Mean Area</label>
+        <input id="area" type="number" step="any" min="0">
+
+
+        <label>Mean Smoothness</label>
+        <input id="smoothness" type="number" step="any" min="0">
+
+
+        <button onclick="predict()">Predict</button>
+
+
+        <div id="result"></div>
+
+
+        <script>
+
+        async function predict() {
+
+            const radius =
+                Number(document.getElementById("radius").value);
+
+            const texture =
+                Number(document.getElementById("texture").value);
+
+            const perimeter =
+                Number(document.getElementById("perimeter").value);
+
+            const area =
+                Number(document.getElementById("area").value);
+
+            const smoothness =
+                Number(document.getElementById("smoothness").value);
+
+
+            // Frontend validation
+
+            if (
+                radius <= 0 ||
+                texture <= 0 ||
+                perimeter <= 0 ||
+                area <= 0 ||
+                smoothness <= 0
+            ) {
+
+                document.getElementById("result").innerHTML =
+                    "Please enter valid positive values.";
+
+                return;
+            }
+
+
+            const requestData = {
+
+                mean_radius: radius,
+
+                mean_texture: texture,
+
+                mean_perimeter: perimeter,
+
+                mean_area: area,
+
+                mean_smoothness: smoothness
+
+            };
+
+
+            try {
+
+                const response = await fetch(
+                    "/predict",
+                    {
+                        method: "POST",
+
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+
+                        body: JSON.stringify(requestData)
+                    }
+                );
+
+
+                const result = await response.json();
+
+
+                if (!response.ok) {
+
+                    document.getElementById("result").innerHTML =
+                        "Invalid input.";
+
+                    return;
+                }
+
+
+                document.getElementById("result").innerHTML =
+                    "Prediction: " +
+                    result.prediction +
+                    "<br>Confidence: " +
+                    result.confidence +
+                    "%";
+
+            }
+
+            catch (error) {
+
+                document.getElementById("result").innerHTML =
+                    "Error connecting to API.";
+
+            }
+
+        }
+
+        </script>
+
+    </body>
+
+    </html>
+    """
+
+    return html
+
+
+# ============================================================
+# 13. START FASTAPI SERVER
+# ============================================================
+
+nest_asyncio.apply()
+
+
+def run_server():
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000
+    )
+
+
+server_thread = threading.Thread(
+    target=run_server,
+    daemon=True
+)
+
+server_thread.start()
+
+time.sleep(3)
+
+print("\n======================================")
+print("FASTAPI SERVER STARTED")
+print("======================================")
+print("API:       http://127.0.0.1:8000")
+print("Dashboard: http://127.0.0.1:8000/dashboard")
+print("Docs:      http://127.0.0.1:8000/docs")
+print("======================================")
